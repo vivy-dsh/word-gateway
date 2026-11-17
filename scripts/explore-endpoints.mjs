@@ -7,7 +7,7 @@
  *   node scripts/explore-endpoints.mjs --json       # 机器可读
  *   node scripts/explore-endpoints.mjs --check      # 有 key 时核对，缺 id 就非 0 退出
  *
- * key 从环境变量读：DASHSCOPE_API_KEY / QWEN_TOKEN_PLAN_API_KEY / SILICONFLOW_API_KEY / MINIMAX_API_KEY。
+ * key 从环境变量读：DASHSCOPE_API_KEY / QWEN_TOKEN_PLAN_API_KEY / SILICONFLOW_API_KEY / MINIMAX_API_KEY / MOSS_API_KEY。
  * 没有 key 也能跑：只报「这个接入点有没有列表接口」。
  */
 
@@ -19,6 +19,7 @@ const KEY_ENV = {
   'qwen-token-plan': 'QWEN_TOKEN_PLAN_API_KEY',
   siliconflow: 'SILICONFLOW_API_KEY',
   minimax: 'MINIMAX_API_KEY',
+  moss: 'MOSS_API_KEY',
 }
 
 const args = new Set(process.argv.slice(2))

@@ -78,6 +78,17 @@ test('没有 llm 服务时仍给出预制候选，并保留每个能力的说明
   assert.deepEqual(directory.failures, [])
 })
 
+test('模思接线：四条能力有候选，向量与决策如实说「没有」', async () => {
+  const directory = await createCatalog(contextWith({}))()
+  assert.deepEqual(directory.models.asr.moss.map(model => model.id), ['moss-transcribe-1.0', 'moss-transcribe-diarize-pro'])
+  assert.deepEqual(directory.models.tts.moss.map(model => model.id), ['moss-tts-1.5-flash', 'moss-tts-1.0-pro', 'moss-ttsd-1.0', 'moss-voice-generator-1.0'])
+  assert.deepEqual(directory.models.omni.moss.map(model => model.id), ['moss-vl-1.0'])
+  assert.deepEqual(directory.models.realtime.moss.map(model => model.id), ['moss-live-1.0'])
+  assert.equal(directory.models.embedding.moss, undefined)
+  assert.match(directory.notes['embedding@moss'], /没有向量模型/)
+  assert.match(directory.notes['decision@moss'], /chat/)
+})
+
 test('一家 provider 抛错只记进 failures，不影响别家', async () => {
   const catalog = createCatalog(contextWith({
     llm: llm(

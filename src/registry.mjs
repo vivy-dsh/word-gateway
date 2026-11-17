@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { CAPABILITIES, CAPABILITY_SPECS, KINDS, deriveAuthRef } from './capabilities.mjs'
+import { CAPABILITIES, CAPABILITY_SPECS, KINDS, defaultsFor, deriveAuthRef } from './capabilities.mjs'
 
 const FIELDS = ['enabled', 'kind', 'baseURL', 'model', 'authRef', 'note']
 const LIMITS = { baseURL: 512, model: 200, authRef: 128, note: 500 }
@@ -41,7 +41,20 @@ function validate(capability, current, patch) {
     next[field] = text(value, field)
   }
   if (!KINDS.includes(next.kind)) throw new Error(`未知接入点类型：${next.kind}`)
-  if (!next.baseURL.startsWith('https://')) throw new Error('baseURL 必须以 https:// 开头')
+  // 换接入点时，若调用方没同时给基址/模型，就填这一家的预制值。
+  // 面板总会带全字段，所以这条主要服务脚本与手工调用；新接入点没有这类模型时模型为空，
+  // 保存会被「模型名不能为空」拒绝——宁可报错，也不把上一家的模型留在这一家的端点上。
+  if (patch?.kind !== undefined && patch.kind !== current.kind) {
+    const defaults = defaultsFor(capability, next.kind)
+    if (patch.baseURL === undefined && defaults.baseURL) next.baseURL = defaults.baseURL
+    if (patch.model === undefined) next.model = defaults.model
+  }
+  const websocket = CAPABILITY_SPECS[capability]?.transport === 'websocket'
+  if (websocket) {
+    if (!next.baseURL.startsWith('wss://')) throw new Error(`${CAPABILITY_SPECS[capability].title}的基址必须以 wss:// 开头`)
+  } else if (!next.baseURL.startsWith('https://')) {
+    throw new Error('baseURL 必须以 https:// 开头')
+  }
   if (/\s/.test(next.baseURL)) throw new Error('baseURL 不能包含空白字符')
   if (!next.model) throw new Error('模型名不能为空')
   // 接入点类型变了而凭据引用还是上一个类型的默认值时，跟着改；用户写过的值不动。

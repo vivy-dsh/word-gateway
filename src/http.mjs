@@ -1,4 +1,5 @@
 import { CAPABILITIES } from './capabilities.mjs'
+import { HubError, createSpeak } from './speak.mjs'
 
 const prefix = '/dsh-capability-hub/api'
 const BODY_LIMIT = 64 * 1024
@@ -6,6 +7,20 @@ const BODY_LIMIT = 64 * 1024
 function send(res, status, value) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
   res.end(JSON.stringify(value))
+}
+
+/** 音频响应：时长放头里，调用方（语音插件）就不必自己解析 wav。 */
+function sendAudio(res, result) {
+  res.writeHead(200, {
+    'content-type': result.mime,
+    'content-length': String(result.audio.length),
+    'content-disposition': `inline; filename="tts.${result.format}"`,
+    'x-duration-ms': String(result.durationMs || 0),
+    'x-tts-model': result.model,
+    'x-tts-voice': result.voice,
+    'cache-control': 'no-store',
+  })
+  res.end(result.audio)
 }
 
 async function readBody(req) {
@@ -43,13 +58,18 @@ function refsOf(state) {
 }
 
 /**
- * 面板与后续插件共用的 HTTP 面。本轮只读状态、改插槽、读写凭据；
- * 没有 invoke 路由——能力调用在适配器到位前一律未实现。
+ * 面板与语音插件共用的 HTTP 面：读状态、改插槽、读写凭据，外加 `tts` 合成。
+ *
+ * 只有 `tts` 有 invoke 路由：语音插件真的需要它，其余能力（asr / embedding / omni）
+ * 还没有确定的调用方与形状，所以不开口子——空接口比没有接口更难收回。
+ *
  * @param ctx - 插件上下文（需要 webServer 与 credentials）
  * @param registry - createRegistry 的返回值
  * @param catalog - 可选的能力候选读取器（createCatalog 的返回值）；缺省时该路由返回空目录
+ * @param speak - 可选的合成实现（createSpeak 的返回值）。缺省时按当前 ctx 现建一个，
+ *                与 index.mjs 提供给语音插件的那份逻辑相同。
  */
-export function registerHubHttp(ctx, registry, catalog) {
+export function registerHubHttp(ctx, registry, catalog, speak = createSpeak({ registry, credentials: ctx.credentials })) {
   return ctx.webServer.register({ kind: 'prefix', path: prefix, handler: async (req, res) => {
     const fail = (status, code, error) => send(res, status, { ok: false, code, error })
     const denied = rejected(ctx, req)
@@ -100,6 +120,17 @@ export function registerHubHttp(ctx, registry, catalog) {
           await ctx.credentials.set(ref, value)
         }
         return send(res, 200, { ok: true, ref, credential: await ctx.credentials.describe(ref) })
+      }
+      // 合成：文本进、音频出。只有 tts 有这个口子，理由见上面的注释。
+      // 逻辑全在 speak.mjs：面板走这里，语音插件走进程内，同一份。
+      if (req.method === 'POST' && url.pathname === `${prefix}/tts`) {
+        const payload = await body()
+        try {
+          return sendAudio(res, await speak('tts', { text: payload?.text, voice: payload?.voice }))
+        } catch (error) {
+          if (error instanceof HubError) return fail(error.status, error.code, error.message)
+          throw error
+        }
       }
       return fail(404, 'NOT_FOUND', '没有这个接口')
     } catch (error) {

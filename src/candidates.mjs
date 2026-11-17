@@ -11,17 +11,19 @@
  */
 
 /** 本表最近一次人工核对的日期；explore 脚本会打印它。 */
-export const VERIFIED_AT = '2026-11-11'
+export const VERIFIED_AT = '2026-11-18'
 
 /**
  * 各接入点的模型列表地址（不含 `/models` 后缀）。
  * Token Plan 没有列表接口（实测 404），留空表示只支持手填。
+ * 模思的列表接口与推理同一主机：`https://api.mosi.cn/v1/models`。
  */
 export const LIST_BASE = {
   dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   siliconflow: 'https://api.siliconflow.cn/v1',
   minimax: 'https://api.minimax.chat/v1',
   'qwen-token-plan': '',
+  moss: 'https://api.mosi.cn/v1',
 }
 
 /** 新建插槽时的默认模型名；为空表示必须手填。 */
@@ -31,6 +33,7 @@ export const DEFAULT_MODEL = {
   decision: 'decision-model-preview',
   embedding: 'qwen3.7-text-embedding',
   omni: 'qwen-omni-turbo',
+  realtime: 'moss-live-1.0',
 }
 
 /** 面板直接展示的名字；缺省时用 id。 */
@@ -53,6 +56,14 @@ const LABELS = {
   'Qwen/Qwen3-Embedding-8B': '硅基流动 · Qwen3-Embedding 8B',
   'speech-02-hd': 'MiniMax · speech-02-hd',
   'speech-02-turbo': 'MiniMax · speech-02-turbo',
+  'moss-tts-1.5-flash': '模思 · TTS 1.5 Flash（推荐）',
+  'moss-tts-1.0-pro': '模思 · TTS 1.0 Pro',
+  'moss-ttsd-1.0': '模思 · 双人对话语音 1.0',
+  'moss-voice-generator-1.0': '模思 · 音色描述生成 1.0',
+  'moss-transcribe-1.0': '模思 · 音频转写 1.0',
+  'moss-transcribe-diarize-pro': '模思 · 多说话人转写 Pro（推荐）',
+  'moss-vl-1.0': '模思 · 多模态理解 1.0（Beta）',
+  'moss-live-1.0': '模思 · MOSS-Live 1.0（全双工，Beta）',
 }
 
 /**
@@ -63,11 +74,13 @@ export const PRESET = {
   asr: {
     dashscope: ['qwen-audio-3.1-asr-flash', 'paraformer-v2'],
     siliconflow: ['FunAudioLLM/SenseVoiceSmall'],
+    moss: ['moss-transcribe-1.0', 'moss-transcribe-diarize-pro'],
   },
   tts: {
     dashscope: ['qwen-audio-3.1-tts-flash', 'cosyvoice-v2', 'cosyvoice-v1'],
     siliconflow: ['FunAudioLLM/CosyVoice2-0.5B'],
     minimax: ['speech-02-hd', 'speech-02-turbo'],
+    moss: ['moss-tts-1.5-flash', 'moss-tts-1.0-pro', 'moss-ttsd-1.0', 'moss-voice-generator-1.0'],
   },
   decision: {
     'qwen-token-plan': ['decision-model-preview'],
@@ -78,6 +91,10 @@ export const PRESET = {
   },
   omni: {
     dashscope: ['qwen-omni-turbo', 'qwen-omni-turbo-latest'],
+    moss: ['moss-vl-1.0'],
+  },
+  realtime: {
+    moss: ['moss-live-1.0'],
   },
 }
 

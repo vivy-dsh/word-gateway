@@ -54,3 +54,11 @@ test('presetIds 按能力归组且不含重复', () => {
   }
   assert.match(VERIFIED_AT, /^\d{4}-\d{2}-\d{2}$/)
 })
+
+test('模思候选按能力归组，实时语音只有 MOSS-Live', () => {
+  assert.deepEqual(presetFor('realtime', 'moss').map(model => model.id), ['moss-live-1.0'])
+  assert.deepEqual(presetFor('realtime', 'dashscope'), [], '别的接入点没有确认过的实时地址')
+  assert.ok(PRESET.tts.moss.includes('moss-ttsd-1.0'), '双人对话语音也算 TTS 候选')
+  assert.equal(PRESET.embedding.moss, undefined, '模思没有向量模型，不该编一个候选')
+  assert.equal(PRESET.decision.moss, undefined, '模思的 Nex 是 chat，不进决策候选')
+})

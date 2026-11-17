@@ -12,19 +12,25 @@ window.__ModuleLoader__.load({
     const { createElement: h, useEffect, useSyncExternalStore } = React
 
     const API = '/dsh-capability-hub/api'
-    const ORDER = ['asr', 'tts', 'decision', 'embedding', 'omni']
+    const ORDER = ['asr', 'tts', 'decision', 'embedding', 'omni', 'realtime']
+    // [id, 展示名, HTTP 基址]：切接入点时用第三项换掉上一个接入点的基址。
     const KINDS = [
-      ['dashscope', '百炼 · DashScope'],
-      ['qwen-token-plan', '千问 · Token Plan'],
-      ['siliconflow', '硅基流动'],
-      ['minimax', 'MiniMax'],
+      ['dashscope', '百炼 · DashScope', 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com'],
+      ['qwen-token-plan', '千问 · Token Plan', 'https://token-plan.maas.qianwenaiapi.com'],
+      ['siliconflow', '硅基流动', 'https://api.siliconflow.cn'],
+      ['minimax', 'MiniMax', 'https://api.minimax.chat'],
+      ['moss', '模思 · MOSS API', 'https://api.mosi.cn'],
     ]
+    // 实时语音只有模思给过确认过的 wss 地址，别的接入点不列出来，免得存下一个不存在的端点。
+    const REALTIME_KINDS = ['moss']
+    const REALTIME_BASE = 'wss://api.mosi.cn/v1/realtime'
     const TITLES = {
       asr: '语音识别',
       tts: '语音合成',
       decision: '决策模型',
       embedding: '向量化',
       omni: '全模态理解',
+      realtime: '实时语音',
     }
     const HINTS = {
       asr: '一段音频 → 文本。给语音输入、会议与语音条做准备。',
@@ -32,6 +38,18 @@ window.__ModuleLoader__.load({
       decision: '状态与问题 → 选项 + 置信度。用于路由、判定这类结构化的选择。',
       embedding: '文本 → 向量。记忆召回的候选；是否换库由对照测决定。',
       omni: '音频 / 视频 → 文本。能「听」的那一类模型。',
+      realtime: '一条常驻的全双工音频通道，不是一问一答。这里只记接入参数；WS 管线尚未实现。',
+    }
+
+    /**
+     * 某能力在某接入点下的默认基址。实时语音是 wss，其余是接入点的 HTTP 根。
+     * @param capability - 能力名
+     * @param kind - 接入点类型
+     * @returns 基址字符串；未知组合返回空串（保存时会被服务端拒绝）
+     */
+    function defaultBase(capability, kind) {
+      if (capability === 'realtime') return kind === 'moss' ? REALTIME_BASE : ''
+      return KINDS.find(([id]) => id === kind)?.[2] ?? ''
     }
     const SOURCES = {
       file: '本地凭据文件',
@@ -76,10 +94,6 @@ window.__ModuleLoader__.load({
 .wg-actions{display:flex;align-items:center;gap:8px;margin-top:10px}
 .wg-actions .wg-gap{flex:1}
 .wg-dirty{font-size:11.5px;color:var(--wg-fg3)}
-.wg-placeholder{padding:12px 14px;border:1px dashed var(--wg-line-strong);border-radius:12px;color:var(--wg-fg2)}
-.wg-placeholder .wg-card-title{color:var(--wg-fg2)}
-.wg-ph-list{margin:6px 0 0;padding-left:18px;font-size:12px;line-height:20px}
-.wg-ph-list code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px}
 .wg-foot{font-size:11.5px;line-height:18px;color:var(--wg-fg3)}
 .wg-msg{margin-top:2px;padding:7px 10px;border-radius:8px;font-size:12px}
 .wg-msg.bad{color:var(--wg-bad);background:rgba(196,59,59,.08)}
@@ -142,7 +156,12 @@ window.__ModuleLoader__.load({
         },
         edit(capability, field, value) {
           const draft = { ...(state.drafts[capability] ?? state.slots?.[capability]), [field]: value }
-          if (field === 'kind') draft.authRef = ''
+          if (field === 'kind') {
+            draft.authRef = ''
+            draft.baseURL = defaultBase(capability, value)
+            // 换接入点后旧模型多半不属于这一家：有预制候选就换成第一个，没有就清空让人手填。
+            draft.model = state.catalog?.models?.[capability]?.[value]?.[0]?.id ?? ''
+          }
           set({ drafts: { ...state.drafts, [capability]: draft }, notice: null })
         },
         discard(capability) {
@@ -236,7 +255,11 @@ window.__ModuleLoader__.load({
       const busy = state.busy === capability
       const enabled = value.enabled === true
       const suggestions = state.catalog?.models?.[capability]?.[value.kind] ?? []
-      const note = state.catalog?.notes?.[capability]
+      // 某一家缺这项能力时（例如模思没有向量模型），用 `能力@接入点` 的说明压过能力级的通用说明。
+      const note = state.catalog?.notes?.[`${capability}@${value.kind}`] ?? state.catalog?.notes?.[capability]
+      const kindOptions = capability === 'realtime'
+        ? KINDS.filter(([id]) => REALTIME_KINDS.includes(id))
+        : KINDS
       return h('div', { className: 'wg-card' },
         h('div', { className: 'wg-card-head' },
           h('div', {},
@@ -254,7 +277,7 @@ window.__ModuleLoader__.load({
             h('select', {
               value: value.kind ?? '',
               onChange: event => store.edit(capability, 'kind', event.target.value),
-            }, KINDS.map(([id, label]) => h('option', { key: id, value: id }, label)))),
+            }, kindOptions.map(([id, label]) => h('option', { key: id, value: id }, label)))),
           h(Field, { label: '基址（baseURL）' },
             h('input', {
               type: 'text',
@@ -323,16 +346,6 @@ window.__ModuleLoader__.load({
           dirty ? h('span', { className: 'wg-dirty' }, '有未保存修改') : null))
     }
 
-    function RealtimePlaceholder() {
-      return h('div', { className: 'wg-placeholder' },
-        h('div', { className: 'wg-card-title' }, h('span', { className: 'wg-dot' }), '实时语音（未接入）'),
-        h('p', { className: 'wg-card-hint' },
-          '全双工语音会话不是一次请求换一次结果，它要一条常驻的音频通道，因此单独留位，不占上面的插槽。'),
-        h('ul', { className: 'wg-ph-list' },
-          h('li', {}, h('code', {}, 'qwen-audio-realtime'), ' — 阿里，WebSocket 音频流'),
-          h('li', {}, h('code', {}, 'MOSS-Live'), ' — 模思，全双工 + 语义打断')))
-    }
-
     function WorldGatewaySection({ store }) {
       const state = useSyncExternalStore(store.subscribe, store.get)
       useEffect(() => { void store.load() }, [])
@@ -366,9 +379,8 @@ window.__ModuleLoader__.load({
         state.error ? h('div', { className: 'wg-msg bad' }, state.error) : null,
         state.notice ? h('div', { className: 'wg-msg ok' }, state.notice) : null,
         ...ORDER.map(capability => h(CapabilityCard, { key: capability, capability, store, state })),
-        h(RealtimePlaceholder),
         h('p', { className: 'wg-foot' },
-          '插槽已就绪，能力验证暂缓：上面填的内容只会被各功能插件在就绪后读取，本轮不会发起真实请求。凭据写入 DSH 的凭据存储，与「设置 → 模型」共用同一份。'))
+          '插槽已就绪，能力验证暂缓：上面填的内容只会被各功能插件在就绪后读取，本轮不会发起真实请求。凭据写入 DSH 的凭据存储，与「设置 → 模型」共用同一份。实时语音只记接入参数；浏览器原生 WebSocket 不能带 Authorization 头，将来要走服务端代理。'))
     }
 
     return {

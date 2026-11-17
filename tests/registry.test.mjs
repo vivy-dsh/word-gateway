@@ -11,17 +11,42 @@ function workspace() {
   return { dir, file: join(dir, 'registry.json') }
 }
 
-test('默认插槽覆盖五个能力且默认不启用', () => {
+test('默认插槽覆盖六个能力且默认不启用', () => {
   const { file } = workspace()
   const { slots } = createRegistry({ file }).state()
   assert.deepEqual(Object.keys(slots).sort(), [...CAPABILITIES].sort())
   for (const capability of CAPABILITIES) {
     assert.equal(slots[capability].enabled, false)
     assert.ok(slots[capability].model)
-    assert.ok(slots[capability].baseURL.startsWith('https://'))
+    // 实时语音是常驻 WebSocket，其余能力都是 HTTP。
+    const prefix = capability === 'realtime' ? 'wss://' : 'https://'
+    assert.ok(slots[capability].baseURL.startsWith(prefix), `${capability} 基址应以 ${prefix} 开头`)
   }
   assert.equal(slots.asr.authRef, 'DASHSCOPE_API_KEY')
   assert.equal(slots.decision.authRef, 'QWEN_TOKEN_PLAN_API_KEY')
+  assert.equal(slots.realtime.kind, 'moss')
+  assert.equal(slots.realtime.model, 'moss-live-1.0')
+  assert.equal(slots.realtime.authRef, 'MOSS_API_KEY')
+})
+
+test('切到模思会带出它自己的基址、首个候选与凭据名', () => {
+  const { file } = workspace()
+  const registry = createRegistry({ file })
+  const asr = registry.patch('asr', { kind: 'moss' })
+  assert.equal(asr.baseURL, 'https://api.mosi.cn')
+  assert.equal(asr.model, 'moss-transcribe-1.0')
+  assert.equal(asr.authRef, 'MOSS_API_KEY')
+  const tts = registry.patch('tts', { kind: 'moss' })
+  assert.equal(tts.model, 'moss-tts-1.5-flash')
+  // 模思没有向量模型：切过去后模型为空、保存被拒，而不是留着百炼的 id 发到模思端点。
+  assert.throws(() => registry.patch('embedding', { kind: 'moss' }), /模型名不能为空/)
+})
+
+test('实时语音的基址只接受 wss，其它能力只接受 https', () => {
+  const { file } = workspace()
+  const registry = createRegistry({ file })
+  assert.throws(() => registry.patch('realtime', { baseURL: 'https://api.mosi.cn/v1/realtime' }), /wss/)
+  assert.throws(() => registry.patch('asr', { baseURL: 'wss://api.mosi.cn/v1/realtime' }), /https/)
 })
 
 test('未知能力被拒绝', () => {
@@ -42,11 +67,11 @@ test('未知字段与非 https 基址被拒绝', () => {
 test('改接入点会重新派生凭据名，显式写过的值不动', () => {
   const { file } = workspace()
   const registry = createRegistry({ file })
-  const next = registry.patch('asr', { kind: 'siliconflow' })
+  const next = registry.patch('tts', { kind: 'siliconflow' })
   assert.equal(next.authRef, deriveAuthRef('siliconflow'))
-  const pinned = registry.patch('asr', { kind: 'minimax', authRef: 'MY_CUSTOM_KEY' })
+  const pinned = registry.patch('tts', { kind: 'minimax', authRef: 'MY_CUSTOM_KEY' })
   assert.equal(pinned.authRef, 'MY_CUSTOM_KEY')
-  const moved = registry.patch('asr', { kind: 'dashscope' })
+  const moved = registry.patch('tts', { kind: 'dashscope' })
   assert.equal(moved.authRef, 'MY_CUSTOM_KEY')
 })
 

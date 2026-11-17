@@ -82,7 +82,19 @@ function readyState(overrides = {}) {
     catalog: null,
     drafts: {},
     keys: {},
-    slots: { asr: slot(), tts: slot(), decision: slot(), embedding: slot(), omni: slot() },
+    slots: {
+      asr: slot(),
+      tts: slot(),
+      decision: slot(),
+      embedding: slot(),
+      omni: slot(),
+      realtime: slot({
+        kind: 'moss',
+        baseURL: 'wss://api.mosi.cn/v1/realtime',
+        model: 'moss-live-1.0',
+        authRef: 'MOSS_API_KEY',
+      }),
+    },
     ...overrides,
   }
 }
@@ -143,15 +155,16 @@ test('组件不再把 ref 当 prop 名传给函数组件', { skip }, () => {
   assert.doesNotMatch(SOURCE, /\bref:\s*value\.authRef/)
 })
 
-test('就绪态渲染出 5 张能力卡且没有错误边界兜底', { skip }, async () => {
+test('就绪态渲染出 6 张能力卡且没有错误边界兜底', { skip }, async () => {
   const { html, failure } = await renderOnce(readyState())
   assert.equal(failure, undefined, `渲染不该抛错：${failure?.message ?? ''}`)
   assert.doesNotMatch(html, /data-slot-error/)
-  assert.equal(html.match(/wg-card"/g)?.length, 5)
-  for (const title of ['世界网关', '语音识别', '语音合成', '决策模型', '向量化', '全模态理解']) {
+  assert.equal(html.match(/wg-card"/g)?.length, 6)
+  for (const title of ['世界网关', '语音识别', '语音合成', '决策模型', '向量化', '全模态理解', '实时语音']) {
     assert.ok(html.includes(title), `缺少「${title}」`)
   }
-  assert.ok(html.includes('已启用 0 / 5'), '缺少启用计数')
+  assert.ok(html.includes('已启用 0 / 6'), '缺少启用计数')
+  assert.ok(html.includes('模思 · MOSS API'), '接入点列表里应有模思')
 })
 
 test('加载态与错误态各自有可见文案', { skip }, async () => {
@@ -189,5 +202,5 @@ test('目录请求失败不影响分区渲染', { skip }, async () => {
   // catalog 为 null 就等价于 /catalog 失败：面板照常出卡，只是没有候选。
   const { html, failure } = await renderOnce(readyState({ catalog: null }))
   assert.equal(failure, undefined)
-  assert.equal(html.match(/wg-card"/g)?.length, 5)
+  assert.equal(html.match(/wg-card"/g)?.length, 6)
 })
