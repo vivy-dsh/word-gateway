@@ -1,7 +1,11 @@
 import { synthesizeWithDashscope } from './adapters/dashscope-tts.mjs'
+import { transcribeWithDashscope } from './adapters/dashscope-asr.mjs'
 
 /** 支持「文本进、音频出」的能力 → 各自的适配器。加新能力就在这里加一行。 */
 const SPEAKERS = { tts: synthesizeWithDashscope }
+
+/** 支持「音频进、文本出」的能力 → 各自的适配器。 */
+const TRANSCRIBERS = { asr: transcribeWithDashscope }
 
 /**
  * 合成的失败要带状态码和机器可读的 code：HTTP 路由直接把状态给出去，
@@ -61,6 +65,49 @@ export function createSpeak({ registry, credentials, speakers = SPEAKERS }) {
 }
 
 /**
+ * 世界网关的「识别一次」：音频进、文本出。与 speak 对称。
+ *
+ * 为什么要进程内入口：dsh-local-asr 自己有一套录音、校验、缓存与审计，
+ * 它只缺「谁来识别」这一步。让它去 fetch 网关，同样会撞上会话校验（服务端没有浏览器会话），
+ * 所以识别也走服务注入，HTTP 面只留给面板与调试。
+ *
+ * @param registry - createRegistry 的返回值
+ * @param credentials - 宿主的 credentials 服务（`resolve(ref)` → `{ value }`）
+ * @param transcribers - 可选，覆盖能力→适配器的表；测试用它避开真实上游
+ */
+export function createTranscribe({ registry, credentials, transcribers = TRANSCRIBERS }) {
+  /**
+   * @param capability - 能力名，目前只实现了 `asr`
+   * @param input - `{ audio, format, sampleRate }`，audio 是 Buffer 或 base64 串
+   * @returns 适配器结果：`{ text, model, requestId, durationMs, audioSeconds }`
+   * @throws HubError（status + code，消息可直接展示）
+   */
+  return async function transcribe(capability, input = {}) {
+    const bindings = registry.resolve(capability)
+    if (!bindings.length) throw new HubError(409, 'NOT_ENABLED', `世界网关的 ${capability} 插槽没启用`)
+    const binding = bindings[0]
+    const transcriber = transcribers[capability]
+    if (!transcriber) throw new HubError(501, 'NO_ADAPTER', `还没实现 ${capability} 的识别`)
+    if (binding.kind !== 'dashscope') throw new HubError(501, 'NO_ADAPTER', `还没有 ${binding.kind} 的 ${capability} 适配器`)
+
+    const audio = input.audio
+    const empty = Buffer.isBuffer(audio) ? audio.length === 0 : (typeof audio !== 'string' || audio.trim() === '')
+    if (audio === undefined || audio === null || empty) throw new HubError(400, 'EMPTY_AUDIO', '要识别的音频是空的')
+
+    // 每次现解析，不缓存——凭据换了不用重启。
+    const resolved = await credentials.resolve(binding.authRef)
+    const apiKey = typeof resolved?.value === 'string' ? resolved.value : ''
+    if (!apiKey) throw new HubError(502, 'TRANSCRIPTION_FAILED', `缺少凭据：${binding.authRef} 还没填`)
+
+    try {
+      return await transcriber({ binding, apiKey, audio, format: input.format, sampleRate: input.sampleRate, timeoutMs: 120_000 })
+    } catch (error) {
+      throw new HubError(502, 'TRANSCRIPTION_FAILED', String(error?.message ?? error))
+    }
+  }
+}
+
+/**
  * 世界网关的「现在能不能合成」：不合成，只回答就绪与否。
  *
  * 为什么也要进程内：语音插件判断「世界网关语音包在不在跑」时，原先去 fetch 网关的
@@ -72,12 +119,12 @@ export function createSpeak({ registry, credentials, speakers = SPEAKERS }) {
  *
  * @returns `{ capability, ready, error? }`
  */
-export function createStatus({ registry, credentials, speakers = SPEAKERS }) {
+export function createStatus({ registry, credentials, speakers = SPEAKERS, transcribers = TRANSCRIBERS }) {
   return async function status(capability) {
     const bindings = registry.resolve(capability)
     if (!bindings.length) return { capability, ready: false, error: `世界网关的 ${capability} 插槽没启用` }
     const binding = bindings[0]
-    if (!speakers[capability]) return { capability, ready: false, error: `还没实现 ${capability} 的合成` }
+    if (!(speakers[capability] ?? transcribers[capability])) return { capability, ready: false, error: `还没实现 ${capability} 的适配器` }
     if (binding.kind !== 'dashscope') return { capability, ready: false, error: `还没有 ${binding.kind} 的 ${capability} 适配器` }
     const ref = String(binding.authRef ?? '')
     if (ref) {

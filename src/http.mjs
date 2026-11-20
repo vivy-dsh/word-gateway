@@ -1,8 +1,10 @@
 import { CAPABILITIES } from './capabilities.mjs'
-import { HubError, createSpeak } from './speak.mjs'
+import { HubError, createSpeak, createTranscribe } from './speak.mjs'
 
 const prefix = '/dsh-capability-hub/api'
 const BODY_LIMIT = 64 * 1024
+/** ASR 要把音频 base64 带上来：16k/16bit 单声道 60 秒约 1.9MB，编码后约 2.6MB，留足余量。 */
+const ASR_BODY_LIMIT = 12 * 1024 * 1024
 
 function send(res, status, value) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
@@ -23,12 +25,12 @@ function sendAudio(res, result) {
   res.end(result.audio)
 }
 
-async function readBody(req) {
+async function readBody(req, limit = BODY_LIMIT) {
   let size = 0
   const chunks = []
   for await (const chunk of req) {
     size += Buffer.byteLength(chunk)
-    if (size > BODY_LIMIT) throw new Error('请求体过大')
+    if (size > limit) throw new Error('请求体过大')
     chunks.push(Buffer.from(chunk))
   }
   return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')
@@ -58,18 +60,20 @@ function refsOf(state) {
 }
 
 /**
- * 面板与语音插件共用的 HTTP 面：读状态、改插槽、读写凭据，外加 `tts` 合成。
+ * 面板与语音插件共用的 HTTP 面：读状态、改插槽、读写凭据，外加 `tts` 合成与 `asr` 识别。
  *
- * 只有 `tts` 有 invoke 路由：语音插件真的需要它，其余能力（asr / embedding / omni）
- * 还没有确定的调用方与形状，所以不开口子——空接口比没有接口更难收回。
+ * 只有 `tts` 与 `asr` 有 invoke 路由：它们各自有真实调用方（语音合成、语音识别）。
+ * 其余能力（embedding / omni / 实时语音）还没有确定的调用方与形状，所以不开口子
+ * ——空接口比没有接口更难收回。
  *
  * @param ctx - 插件上下文（需要 webServer 与 credentials）
  * @param registry - createRegistry 的返回值
  * @param catalog - 可选的能力候选读取器（createCatalog 的返回值）；缺省时该路由返回空目录
  * @param speak - 可选的合成实现（createSpeak 的返回值）。缺省时按当前 ctx 现建一个，
  *                与 index.mjs 提供给语音插件的那份逻辑相同。
+ * @param transcribe - 可选的识别实现（createTranscribe 的返回值），同上。
  */
-export function registerHubHttp(ctx, registry, catalog, speak = createSpeak({ registry, credentials: ctx.credentials })) {
+export function registerHubHttp(ctx, registry, catalog, speak = createSpeak({ registry, credentials: ctx.credentials }), transcribe = createTranscribe({ registry, credentials: ctx.credentials })) {
   return ctx.webServer.register({ kind: 'prefix', path: prefix, handler: async (req, res) => {
     const fail = (status, code, error) => send(res, status, { ok: false, code, error })
     const denied = rejected(ctx, req)
@@ -80,8 +84,8 @@ export function registerHubHttp(ctx, registry, catalog, speak = createSpeak({ re
       for (const ref of refsOf(state)) entries[ref] = await ctx.credentials.describe(ref)
       return entries
     }
-    const body = async () => {
-      try { return await readBody(req) } catch { throw new Error('请求体不是合法 JSON') }
+    const body = async (limit = BODY_LIMIT) => {
+      try { return await readBody(req, limit) } catch { throw new Error('请求体不是合法 JSON') }
     }
 
     const url = new URL(req.url, 'http://127.0.0.1')
@@ -127,6 +131,18 @@ export function registerHubHttp(ctx, registry, catalog, speak = createSpeak({ re
         const payload = await body()
         try {
           return sendAudio(res, await speak('tts', { text: payload?.text, voice: payload?.voice }))
+        } catch (error) {
+          if (error instanceof HubError) return fail(error.status, error.code, error.message)
+          throw error
+        }
+      }
+      // 识别：音频进、文本出。与 /tts 对称，请求体里带 base64 音频，所以单独放宽上限。
+      // 有真实调用方（dsh-local-asr 的「世界网关」引擎），不是空接口。
+      if (req.method === 'POST' && url.pathname === `${prefix}/asr`) {
+        const payload = await body(ASR_BODY_LIMIT)
+        try {
+          const result = await transcribe('asr', { audio: payload?.audio, format: payload?.format, sampleRate: payload?.sampleRate })
+          return send(res, 200, { ok: true, ...result })
         } catch (error) {
           if (error instanceof HubError) return fail(error.status, error.code, error.message)
           throw error
